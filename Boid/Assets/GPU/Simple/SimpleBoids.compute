@@ -1,0 +1,120 @@
+﻿#pragma kernel SimulateCS
+
+//Boidの構造体
+struct Boid
+{
+    float3 velocity;
+    float3 position;
+};
+
+//スレッドグループのスレッドサイズ
+#define BLOCK_SIZE 256
+
+//BoidデータBuffer
+RWStructuredBuffer<Boid> _BoidBuffer;
+
+int _BoidsNum;
+float _DeltaTime;
+
+float _Mass;
+
+float _SeparateRadius;
+float _SeparateWeight;
+float _AlignmentRadius;
+float _AlignmentWeight;
+float _CohesionRadius;
+float _CohesionWeight;
+
+float _AvoidingPower;
+
+float3 _WallMax;
+float3 _WallMin;
+
+float _MaxSpeed;
+float _MaxSteerForce;
+
+float3 Clamp(float3 vec, float max)
+{
+    float len = sqrt(dot(vec, vec));
+    return (len > max && len > 0) ? normalize(vec) * max  : vec;
+}
+
+[numthreads(BLOCK_SIZE, 1, 1)]
+void SimulateCS(uint3 DTid : SV_DispatchThreadID)
+{
+    const int pId = DTid.x;
+    Boid pBoid = _BoidBuffer[pId];
+    
+    float3 sepSum = (float3)0.0;
+    float3 aliSum = (float3)0.0;
+    float3 cohSum = (float3)0.0;
+    
+    int sepCnt = 0;
+    int aliCnt = 0;
+    int cohCnt = 0;
+    
+    //コライダーがないため、全Boidとの距離を測り、一定以内なら処理を行う
+    for(int nId = 0; nId < _BoidsNum; nId++)
+    {
+        //自分自身とは計算を行わない
+        if(nId == pId) continue;
+        
+        Boid nBoid = _BoidBuffer[nId];
+                
+        float3 diff = pBoid.position - nBoid.position;
+        float dist = sqrt(dot(diff, diff));
+        
+        if(dist <= _SeparateRadius)
+        {
+            sepSum -= diff;
+            sepCnt++;
+        }
+        
+        if(dist <= _AlignmentRadius)
+        {
+            aliSum += nBoid.velocity; //今回は向いている方向＝進んでいる方向
+            aliCnt++;
+        }
+        
+        if(dist <= _CohesionRadius)
+        {
+            cohSum += diff; 
+            cohCnt++;
+        }
+    }
+    
+    if(sepCnt != 0)
+    {
+        sepSum /= sepCnt;
+    }
+    
+    if(aliCnt != 0)
+    {
+        aliSum /= aliCnt;
+    }
+    
+    if(cohCnt != 0)
+    {
+        cohSum /= cohCnt;
+    }
+    
+    float3 force = sepSum * _SeparateWeight +
+                   aliSum * _AlignmentWeight +
+                   cohSum * _CohesionWeight;
+                   
+    if
+    (
+        pBoid.position.x > _WallMax.x || pBoid.position.x < _WallMin.x ||
+        pBoid.position.y > _WallMax.y || pBoid.position.y < _WallMin.y ||
+        pBoid.position.z > _WallMax.z || pBoid.position.z < _WallMin.z
+        
+    )
+    {
+        force = -normalize(pBoid.position) * _AvoidingPower;
+    }
+    
+    float3 acc = Clamp(force, _MaxSteerForce) / _Mass;
+    pBoid.velocity = Clamp(acc * _DeltaTime + pBoid.velocity, _MaxSpeed);
+    pBoid.position += pBoid.velocity * _DeltaTime;
+    _BoidBuffer[pId] = pBoid;   
+}
