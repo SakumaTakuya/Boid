@@ -1,28 +1,24 @@
-﻿// Upgrade NOTE: replaced 'mul(UNITY_MATRIX_MVP,*)' with 'UnityObjectToClipPos(*)'
-
-// Upgrade NOTE: replaced 'mul(UNITY_MATRIX_MVP,*)' with 'UnityObjectToClipPos(*)'
-
-Shader "Custom/BoidsShader" {
+﻿Shader "Custom/BoidsShader" {
     Properties {
         _Color ("Color", Color) = (1,1,1,1)
         _MainTex ("Albedo (RGB)", 2D) = "white" {}
     }
     SubShader {
-
         Pass {
 
-            Tags { "RenderType"="Opaque"  "LightMode" = "ForwardBase"}
+            Tags {"LightMode" = "ForwardBase"}
             
             CGPROGRAM
 
             #pragma vertex vert
             #pragma fragment frag
-            //#pragma multi_compile_fwdbase nolightmap nodirlightmap nodynlightmap novertexlight
-            #pragma target 4.5
-
+            
             #include "UnityCG.cginc"
-            //#include "UnityLightingCommon.cginc"
+            #include "Lighting.cginc"
             #include "AutoLight.cginc"
+            
+            #pragma multi_compile_fwdbase nolightmap nodirlightmap nodynlightmap novertexlight
+            #pragma target 4.5
 
             struct Boid 
             {
@@ -43,8 +39,10 @@ Shader "Custom/BoidsShader" {
                 float4 pos : SV_POSITION;
                 float4 normal : NORMAL;
                 float2 uv : TEXCOORD0;
-                float3 lightDir : TEXCOORD1;
                 SHADOW_COORDS(2)
+                fixed3 diff : COLOR0;
+                fixed3 ambient : COLOR1;
+                
             };
             
             //アフィン変換の行列を作成する
@@ -95,13 +93,14 @@ Shader "Custom/BoidsShader" {
                     pos
                 );
                 
+                //以下からはチュートリアル通りにライティングを行う
                 v2f o;
-                o.normal = normalize(mul(object2world, v.normal));
                 o.pos = UnityObjectToClipPos(mul(object2world, v.vertex));
-                o.lightDir = normalize(ObjSpaceLightDir(v.vertex));
+                o.normal = normalize(mul(object2world, v.normal));
                 o.uv = v.texcoord;
-                
-                TRANSFER_VERTEX_TO_FRAGMENT(o);
+                half nl = max(0, dot(o.normal, _WorldSpaceLightPos0.xyz));
+                o.diff = nl * _LightColor0.rgb;
+                o.ambient = ShadeSH9(half4(o.normal.xyz, 1));
                 TRANSFER_SHADOW(o)
                 return o;
             }
@@ -109,17 +108,16 @@ Shader "Custom/BoidsShader" {
             fixed4 frag (v2f i) : SV_Target
             {
                 fixed shadow = SHADOW_ATTENUATION(i);
-                fixed3 ambient = UNITY_LIGHTMODEL_AMBIENT;
                 fixed4 col = tex2D(_MainTex, i.uv) * _Color;
-                col.rgb *=  shadow * saturate(dot(i.lightDir, i.normal)); 
-                col.rgb += ambient;
+                fixed3 lighting = i.diff * shadow + i.ambient;
+                col.rgb *= lighting;
                 UNITY_APPLY_FOG(i.fogCoord, col);
                 return col;
             }
 
             ENDCG
         }
+        
+        UsePass "Legacy Shaders/VertexLit/SHADOWCASTER"
     }
-    
-    FallBack "Diffuse"
 }

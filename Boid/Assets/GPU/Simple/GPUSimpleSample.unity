@@ -210,18 +210,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 707d157eb2c47704a92bc596df7f94df, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  BoidsNum: 8192
+  BoidsNum: 16384
   _spawnSize: 10
   _mass: 1
   _separate:
-    Radius: 2
-    Weight: 1
+    Radius: 1
+    Weight: 3
   _alignment:
     Radius: 2
     Weight: 2
   _cohesion:
-    Radius: 1
-    Weight: 3
+    Radius: 2
+    Weight: 1
   _avoidingPower: 10
   _maxSpeed: 2
   _maxSteerForce: 1
