@@ -11,7 +11,7 @@ public class BoidEmitter : MonoBehaviour
 	//壁の大きさ
 	[SerializeField] private Vector3 _wallMin = new Vector3(-20, -20, -20);
 	[SerializeField] private Vector3 _wallMax = new Vector3( 20,  20,  20);
-
+	
 	// Use this for initialization
 	private void Start ()
 	{
@@ -24,7 +24,7 @@ public class BoidEmitter : MonoBehaviour
 			Instantiate(_boid, pos, rot);
 		}
 	}
-	
+
 	private void OnDrawGizmos()
 	{
 		Gizmos.color = Color.cyan;

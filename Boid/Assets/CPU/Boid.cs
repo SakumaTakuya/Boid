@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.Playables;
 
 public class Boid : MonoBehaviour
 {
@@ -34,7 +35,7 @@ public class Boid : MonoBehaviour
 	[SerializeField] private float _rotationRate = 10;
 
 	private void Update()
-	{
+	{		
 		var separateCols = Physics.OverlapSphere(transform.position, _separate.Radius, _boidLayer);
 		var alignmentCols = Physics.OverlapSphere(transform.position, _alignment.Radius, _boidLayer);
 		var cohesionCols = Physics.OverlapSphere(transform.position, _cohesion.Radius, _boidLayer);

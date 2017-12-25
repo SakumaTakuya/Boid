@@ -207,11 +207,11 @@ MonoBehaviour:
   m_GameObject: {fileID: 1857050245}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 707d157eb2c47704a92bc596df7f94df, type: 3}
+  m_Script: {fileID: 11500000, guid: afe4cc3d50ea4dc438b28992888c67d5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  BoidsNum: 8192
-  _spawnSize: 10
+  BoidsNum: 16
+  SpawnSize: 10
   _mass: 1
   _separate:
     Radius: 1
@@ -223,11 +223,12 @@ MonoBehaviour:
     Radius: 2
     Weight: 1
   _avoidingPower: 10
-  _maxSpeed: 2
-  _maxSteerForce: 1
-  _wallMin: {x: -10, y: -10, z: -10}
-  _wallMax: {x: 10, y: 10, z: 10}
-  _boidComputeShader: {fileID: 7200000, guid: d0f35250cd975bc478e407902f7825bd, type: 3}
+  _maxSpeed: 5
+  _maxSteerForce: 0.5
+  WallMin: {x: -20, y: -20, z: -20}
+  WallMax: {x: 20, y: 20, z: 20}
+  BoidComputeShader: {fileID: 7200000, guid: 83184bc55a81aeb4697503a10971fc02, type: 3}
+  _bucketLength: 4
 --- !u!114 &1857050252
 MonoBehaviour:
   m_ObjectHideFlags: 0

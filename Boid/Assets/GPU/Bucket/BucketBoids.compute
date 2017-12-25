@@ -1,14 +1,471 @@
-﻿// Each #kernel tells which function to compile; you can have many kernels
-#pragma kernel CSMain
+﻿#pragma kernel SimulateCS
+#pragma kernel SortCS
+#pragma kernel SetLastCS
 
-// Create a RenderTexture with enableRandomWrite flag and set it
-// with cs.SetTexture
-RWTexture2D<float4> Result;
-
-[numthreads(8,8,1)]
-void CSMain (uint3 id : SV_DispatchThreadID)
+//Boidの構造体
+struct Boid
 {
-	// TODO: insert actual code here!
+    float3 velocity;
+    float3 position;
+    int id;
+};
 
-	Result[id.xy] = float4(id.x & id.y, (id.x & 15)/15.0, (id.y & 15)/15.0, 0.0);
+//スレッドグループのスレッドサイズ
+#define BLOCK_SIZE 256
+
+//BoidデータBuffer
+RWStructuredBuffer<Boid> _BoidBuffer;//ソートを想定して_BoidsNum + 1の大きさにしておく
+RWStructuredBuffer<int> _LastIDBuffer;
+RWStructuredBuffer<int> _buffer;
+
+//idだけ分離する
+
+uint _BoidsNum;
+float _DeltaTime;
+
+float _Mass;
+
+float _SeparateRadius;
+float _SeparateWeight;
+float _AlignmentRadius;
+float _AlignmentWeight;
+float _CohesionRadius;
+float _CohesionWeight;
+
+float _AvoidingPower;
+
+float3 _WallMax;
+float3 _WallMin;
+
+float _MaxSpeed;
+float _MaxSteerForce;
+
+float _BucketLength;
+//int3 _BucketSize;
+int _BucketSizeX;
+int _BucketSizeXY;
+
+uint _Length;
+uint _Target;
+
+float3 Clamp(float3 vec, float max)
+{
+    float len = sqrt(dot(vec, vec));
+    return (len > max && len > 0) ? normalize(vec) * max  : vec;
 }
+
+//ある軸方向のバケット位置を取得する
+int GetBucketAxisID(float axis, float min)
+{
+    return (int)((axis - min) / _BucketLength);
+}
+
+//3次元のIDを1次元へと変換する
+int AdjustBucketID(int x, int y, int z)
+{
+    return x + y * _BucketSizeX + z * _BucketSizeXY;
+}  
+
+[numthreads(BLOCK_SIZE, 1, 1)]
+void SimulateCS(uint3 DTid : SV_DispatchThreadID)
+{
+    const int pId = DTid.x;
+    Boid pBoid = _BoidBuffer[pId];
+    Boid nBoid;
+        
+    /*
+    ============================
+        位置更新
+    ============================
+    */
+    float3 sepSum = (float3)0.0;
+    float3 aliSum = (float3)0.0;
+    float3 cohSum = (float3)0.0;
+    
+    uint sepCnt = 0;
+    uint aliCnt = 0;
+    uint cohCnt = 0;    
+
+    //各方向のバケット位置を取得     
+    int bX = GetBucketAxisID(pBoid.position.x, _WallMin.x);
+    int bY = GetBucketAxisID(pBoid.position.y, _WallMin.y);
+    int bZ = GetBucketAxisID(pBoid.position.z, _WallMin.z);
+    
+    //コライダーがないため、全Boidとの距離を測り、一定以内なら処理を行う
+    //それぞれ一つ隣から探索開始
+    for(int z = bZ - 1; z <= bZ + 1; z++) {
+    for(int y = bY - 1; y <= bY + 1; y++) {
+    for(int x = bX - 1; x <= bX + 1; x++)
+    {
+        int id = AdjustBucketID(x, y, z);//隣接バケットのバケットIDを取得
+        int nId = _LastIDBuffer[id];//そのバケットに属するBoidの中でBoid配列の最後尾にあるものの配列位置を取り出す
+        nBoid = _BoidBuffer[nId];
+               	
+       	while(nBoid.id == id)//近傍BoidのバケットIDが探索中のものか確認
+       	{
+       	    if(nId == pId) continue;//自分自身とは計算を行わない
+                                
+            float3 diff = pBoid.position - nBoid.position;
+            float dist = sqrt(dot(diff, diff));
+                         
+            if(dist <= _SeparateRadius)
+            {
+                sepSum += diff;
+                sepCnt++;
+            }
+                          
+            if(dist <= _AlignmentRadius)
+            {
+                aliSum += nBoid.velocity;//今回は向いている方向＝進んでいる方向
+                aliCnt++;
+            }
+                         
+            if(dist <= _CohesionRadius)
+            {
+                cohSum -= diff; 
+                cohCnt++;
+            }
+                    
+       	    nBoid = _BoidBuffer[--nId];//近傍Boidの更新                        
+       	}
+    }}}
+   
+    if(sepCnt != 0)
+    {
+        sepSum /= sepCnt;
+    }
+    
+    if(aliCnt != 0)
+    {
+        aliSum /= aliCnt;
+    }
+    
+    if(cohCnt != 0)
+    {
+        cohSum /= cohCnt;
+    }
+    
+    float3 force = sepSum * _SeparateWeight  +
+                   aliSum * _AlignmentWeight +
+                   cohSum * _CohesionWeight;
+                   
+    if
+    (
+        pBoid.position.x > _WallMax.x || pBoid.position.x < _WallMin.x ||
+        pBoid.position.y > _WallMax.y || pBoid.position.y < _WallMin.y ||
+        pBoid.position.z > _WallMax.z || pBoid.position.z < _WallMin.z        
+    )
+    {
+        force = -normalize(pBoid.position) * _AvoidingPower;
+    }
+    
+    float3 acc = Clamp(force, _MaxSteerForce) / _Mass;
+    
+    pBoid.velocity = Clamp(acc * _DeltaTime + pBoid.velocity, _MaxSpeed);
+    pBoid.position += pBoid.velocity * _DeltaTime;
+    
+    bX = GetBucketAxisID(pBoid.position.x, _WallMin.x);
+    bY = GetBucketAxisID(pBoid.position.y, _WallMin.y);
+    bZ = GetBucketAxisID(pBoid.position.z, _WallMin.z);
+    pBoid.id = AdjustBucketID(bX, bY, bZ); 
+    
+    _BoidBuffer[pId] = pBoid;
+    
+/*    AllMemoryBarrierWithGroupSync();
+    
+
+    for(uint len = 2; len <= _BoidsNum; len *= 2)
+    {
+        for(uint mlen = len / 2; mlen > 0; mlen /= 2)
+        {
+            uint nId = pId ^ mlen;
+                
+            if(nId > pId)
+            {
+                if((pId & len) == 0)
+                {
+                    pBoid = _BoidBuffer[pId];
+                    nBoid = _BoidBuffer[nId];
+    
+                    if(pBoid.id > nBoid.id)
+                    {
+                        _BoidBuffer[nId] = pBoid;
+                        _BoidBuffer[pId] = nBoid;                    
+                    }
+                        
+
+                }
+                else
+                {
+                    pBoid = _BoidBuffer[pId];
+                    nBoid = _BoidBuffer[nId];
+    
+                    if(pBoid.id < nBoid.id)
+                    {
+                        _BoidBuffer[nId] = pBoid;
+                        _BoidBuffer[pId] = nBoid;   
+                    }             
+                }
+            }
+            
+            AllMemoryBarrierWithGroupSync();
+        }    
+    } */     
+}
+
+[numthreads(BLOCK_SIZE, 1, 1)]
+void SortCS(uint3 DTid : SV_DispatchThreadID)
+{
+    uint pId = DTid.x;
+    uint nId = pId ^ _Target;
+                    
+    if(nId > pId)
+    {
+        Boid pBoid = _BoidBuffer[pId];
+        Boid nBoid = _BoidBuffer[nId];
+        
+        int pi = pBoid.id;
+        int ni = nBoid.id;
+        
+        if((pId & _Length) == 0)
+        {   
+            if(pi > ni)
+            {
+                _BoidBuffer[nId] = pBoid;
+                _BoidBuffer[pId] = nBoid;                                                    
+            }
+        }
+        else
+        {        
+            if(pi < ni)
+            {
+                _BoidBuffer[nId] = pBoid;
+                _BoidBuffer[pId] = nBoid;                      
+            }             
+        }
+    }
+}
+
+[numthreads(BLOCK_SIZE, 1, 1)]
+void SetLastCS(uint3 DTid : SV_DispatchThreadID)
+{
+    uint pId = DTid.x;
+    Boid pBoid = _BoidBuffer[pId];
+        
+    if(pBoid.id < _BoidBuffer[pId + 1].id)
+    {
+        _LastIDBuffer[pBoid.id] = pId;
+    } 
+}
+
+/*[numthreads(BLOCK_SIZE, 1, 1)]
+void SortCS(uint3 DTid : SV_DispatchThreadID)
+{
+    uint pId = DTid.x;
+    
+    Boid pBoid;
+    Boid nBoid;
+    
+    for(uint len = 2; len <= _BoidsNum; len *= 2)
+    {
+        for(uint mlen = len / 2; mlen > 0; mlen /= 2)
+        {
+            uint nId = pId ^ mlen;
+                
+            if(nId > pId)
+            {
+                if((pId & len) == 0)
+                {
+                    pBoid = _BoidBuffer[pId];
+                    nBoid = _BoidBuffer[nId];
+    
+                    if(pBoid.id > nBoid.id)
+                    {
+                        _BoidBuffer[nId] = pBoid;
+                        _BoidBuffer[pId] = nBoid;                    
+                    }
+                        
+
+                }
+                else
+                {
+                    pBoid = _BoidBuffer[pId];
+                    nBoid = _BoidBuffer[nId];
+    
+                    if(pBoid.id < nBoid.id)
+                    {
+                        _BoidBuffer[nId] = pBoid;
+                        _BoidBuffer[pId] = nBoid;   
+                    }             
+                }
+            }
+            
+            AllMemoryBarrierWithGroupSync();
+        }    
+    }
+
+        
+    pBoid = _BoidBuffer[pId];
+    if(pBoid.id + 1 == _BoidBuffer[pId + 1].id)
+    {
+        _LastIDBuffer[pBoid.id] = pId;
+    }    
+}*/
+
+/*
+uint _BucketSizeXY;
+uint _BucketSizeX;
+
+uint GetBucketID(float3 position)
+{
+    return (uint)((position.x - _WallMin.x) / _BucketLength) +
+           (uint)((position.x - _WallMin.x) / _BucketLength) * _BucketSizeX +
+           (uint)((position.x - _WallMin.x) / _BucketLength) * _BucketSizeXY;
+}
+
+    for(int z = -_BucketSizeXY; z < _BucketSizeXY; z += _BucketSizeXY){
+    for(int y = -_BucketSizeX; y < _BucketSizeX; y += _BucketSizeX){
+    for(int x = -1; x < 1; x++)
+    {
+        uint id = pBoid.id + x + y + z;
+
+    //各方向のバケット位置を取得     
+    uint bX = GetBucketAxisID(pBoid.position.x, _WallMin.x);
+    uint bY = GetBucketAxisID(pBoid.position.y, _WallMin.y);
+    uint bZ = GetBucketAxisID(pBoid.position.z, _WallMin.z);
+    for(uint z = bZ - 1; z <= bZ + 1; z++) {
+    for(uint y = bY - 1; y <= bY + 1; y++) {
+    for(uint x = bX - 1; x <= bX + 1; x++)
+    {
+        uint id = AdjustBucketID(x, y, z);//隣接バケットのバケットIDを取得
+       	uint nId = _LastIDBuffer[id];//そのバケットに属するBoidの中でBoid配列の最後尾にあるものの配列位置を取り出す
+       	nBoid = _BoidBuffer[nId];
+       	
+       	while(nBoid.id == id)//近傍BoidのバケットIDが探索中のものか確認
+       	{
+       	    if(nId == pId) continue;//自分自身とは計算を行わない
+                            
+            float3 diff = pBoid.position - nBoid.position;
+            float dist = sqrt(dot(diff, diff));
+                  
+            if(dist <= _SeparateRadius)
+            {
+                sepSum += diff;
+                sepCnt++;
+            }
+                    
+            if(dist <= _AlignmentRadius)
+            {
+                aliSum += nBoid.velocity; //今回は向いている方向＝進んでいる方向
+                aliCnt++;
+            }
+                   
+            if(dist <= _CohesionRadius)
+            {
+                cohSum -= diff; 
+                cohCnt++;
+            }
+            
+     	    nBoid = _BoidBuffer[--nId];//近傍Boidの更新                        
+       	}
+    }}}
+
+
+
+groupshared Boid boids[BLOCK_SIZE];
+
+groupshared int flags[BLOCK_SIZE];
+groupshared int flag = 0;
+
+void Swap(int id1, int id2){
+        Boid tmp = boids[id1];
+        boids[id1] = boids[id2];
+        boids[id2] = tmp;
+}
+
+void Compare(int id, uint GI)
+{
+    if(id + 1 >= _BoidsNum) return;
+  
+    if(boids[id].id < boids[id + 1].id) 
+    {
+        Swap(id, id + 1);
+        flags[GI] = 1;
+    }
+}
+
+[numthreads(BLOCK_SIZE, 1, 1)]
+void SortCV(uint3 DTid : SV_DispatchThreadID, uint GI : SV_GroupThreadID)
+{
+    boids[GI]  = _BoidBuffer[DTid.x];
+    
+    do
+    {
+        flags[GI] = 0;
+        
+        int id = 2 * DTid.x + 1;
+        Compare(id, GI);
+        GroupMemoryBarrierWithGroupSync();
+        
+        id = 2 * DTid.x;
+        Compare(id, GI);
+        GroupMemoryBarrierWithGroupSync();
+        
+        if(GI == 0)
+        {
+            int i;
+            for(i = 0; flags[i] == 0; i++);
+            flag = flags[i];
+        }
+        GroupMemoryBarrierWithGroupSync();
+        
+    }while(flag == 1);
+    
+    _BoidBuffer[DTid.x] = boids[GI];
+}
+
+
+void Marge(uint3 DTid : SV_DispatchThreadID, uint GI : SV_GroupThreadID)
+{
+    int lid = DTid.x * BLOCK_SIZE * 2;
+    int rid = lid + BLOCK_SIZE;
+    
+    int bcnt = lid; 
+    int bend = rid + BLOCK_SIZE;
+    
+    int lmax = rid - 1;
+    int rmax = bend - 1;
+    
+    //Boid bs[BLOCK_SIZE] = 
+
+    
+    while(bcnt < bend)
+    {
+                Boid lb = _BoidBuffer[lid];
+                Boid rb = _BoidBuffer[rid];
+        if(lid > lmax) 
+        {
+            _BoidBuffer[bcnt++] = rb;
+            rid++;
+            continue;
+        }
+        else if(rid > rmax)
+        {
+            _BoidBuffer[bcnt++] = lb;
+            lid++;
+            continue;
+        }
+        
+        if(lb.id > rb.id)
+        {
+            _BoidBuffer[bcnt++] = rb;
+            rid++;
+        }
+        else
+        {
+            _BoidBuffer[bcnt++] = lb;
+            lid++;
+        }
+    }
+}*/
+

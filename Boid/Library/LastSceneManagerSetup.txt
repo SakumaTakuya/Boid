@@ -1,4 +1,4 @@
 sceneSetups:
-- path: Assets/GPU/Simple/GPUSimpleSample.unity
+- path: Assets/GPU/Bucket/GPUBucketSample.unity
   isLoaded: 1
   isActive: 1

@@ -76,7 +76,7 @@ void SimulateCS(uint3 DTid : SV_DispatchThreadID, uint GI : SV_GroupThreadID)
         
             if(dist <= _SeparateRadius)
             {
-                sepSum -= diff;
+                sepSum += diff;
                 sepCnt++;
             }
         
@@ -88,7 +88,7 @@ void SimulateCS(uint3 DTid : SV_DispatchThreadID, uint GI : SV_GroupThreadID)
         
             if(dist <= _CohesionRadius)
             {
-                cohSum += diff; 
+                cohSum -= diff; 
                 cohCnt++;
             }
         }
