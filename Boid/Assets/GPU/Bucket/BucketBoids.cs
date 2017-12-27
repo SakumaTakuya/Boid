@@ -10,7 +10,9 @@ public class BucketBoids : SimpleBoids
     [SerializeField] private float _bucketLength = 4f;
     private ComputeBuffer _lastIdBuffer;
 
-    private Vector3 _bucketSize; 
+    private Vector3 _bucketSize;
+    private Vector3 _bucketMin;
+    private int _bucketSizeXYZ;
 
     private int _sortId;
     private int _setLastId;
@@ -18,14 +20,14 @@ public class BucketBoids : SimpleBoids
 
     private void Start()
     {
-        Initialize();
-        InitBoid();
+        InitializeValues();
+        InitializeBuffers();
     }
 
     private void Update()
     {
-        Simulate();
         Sort();
+        Simulate();
     }
     
     private void OnDestroy()
@@ -39,37 +41,39 @@ public class BucketBoids : SimpleBoids
         _lastIdBuffer = null;
     }
     
-    protected override void Initialize()
+    protected override void InitializeValues()
     {
-        base.Initialize();
-        _bucketSize = WallSize / _bucketLength;
+        base.InitializeValues();
+        _bucketSize = (WallSize + Vector3.one * _bucketLength * 2) / _bucketLength;//Wallよりバケット1つ分広めにとる
+        _bucketSizeXYZ = (int) (_bucketSize.x * _bucketSize.y * _bucketSize.z);
+        _bucketMin = WallMin - Vector3.one * _bucketLength;
+        
         BoidComputeShader.SetFloat("_BucketLength", _bucketLength);
-        BoidComputeShader.SetInts("_BucketSizeX", (int)_bucketSize.x);
-        BoidComputeShader.SetInts("_BucketSizeXY", (int)(_bucketSize.x * _bucketSize.y));
-    }
-
-    protected override void InitBoid()
-    {
+        BoidComputeShader.SetInt("_BucketSizeX", (int)_bucketSize.x);
+        BoidComputeShader.SetInt("_BucketSizeXY", (int)(_bucketSize.x * _bucketSize.y));
+        BoidComputeShader.SetVector("_BucketMin", _bucketMin);
+        
         _sortId = BoidComputeShader.FindKernel("SortCS");
         _setLastId = BoidComputeShader.FindKernel("SetLastCS");
         
-        //Bufferの初期化
+        _threadGroupSize = Mathf.CeilToInt(BoidsNum / BLOCK_SIZE); //スレッドグループサイズが丁度良くなるようにしないと効率が悪い
+    }
+
+    protected override void InitializeBuffers()
+    { 
+        //Bufferの初期化(SetLastCS用にダミーデータが一つ必要)
         BoidBuffer = new ComputeBuffer(BoidsNum + 1, Marshal.SizeOf(typeof(BoidData)));
-        _lastIdBuffer = new ComputeBuffer(
-            (int)(_bucketSize.x * _bucketSize.y * _bucketSize.z), 
-            Marshal.SizeOf(typeof(int))
-        );
+        _lastIdBuffer = new ComputeBuffer(_bucketSizeXYZ, Marshal.SizeOf(typeof(int)));
 
         var boidArray = new BoidData[BoidsNum + 1];
-        var idArray = new int[BoidsNum];
         
         for (var i = 0; i < BoidsNum; i++)
         {
             boidArray[i].Postion = Random.insideUnitSphere * SpawnSize;
             boidArray[i].Velocity = Random.insideUnitSphere * 1f;
-            boidArray[i].Id = (int) ((boidArray[i].Postion.x - WallMin.x) / _bucketLength) +
-                              (int) ((boidArray[i].Postion.y - WallMin.y) / _bucketLength * _bucketSize.x ) +
-                              (int) ((boidArray[i].Postion.z - WallMin.z) / _bucketLength * _bucketSize.x * _bucketSize.y);
+            boidArray[i].Id = (int) ((boidArray[i].Postion.x - _bucketMin.x) / _bucketLength) +
+                              (int) ((boidArray[i].Postion.y - _bucketMin.y) / _bucketLength * _bucketSize.x ) +
+                              (int) ((boidArray[i].Postion.z - _bucketMin.z) / _bucketLength * _bucketSize.x * _bucketSize.y);
         }
 		
         //ダミーデータの作成
@@ -77,62 +81,31 @@ public class BucketBoids : SimpleBoids
         boidArray[BoidsNum].Id = int.MaxValue;
         
         BoidBuffer.SetData(boidArray); 
-        _lastIdBuffer.SetData(idArray);
-        
+              
+        //バッファの設定
         BoidComputeShader.SetBuffer(KernelId, "_BoidBuffer", BoidBuffer);
         BoidComputeShader.SetBuffer(KernelId, "_LastIDBuffer", _lastIdBuffer);
         BoidComputeShader.SetBuffer(_sortId, "_BoidBuffer", BoidBuffer);
         BoidComputeShader.SetBuffer(_setLastId, "_BoidBuffer", BoidBuffer);
         BoidComputeShader.SetBuffer(_setLastId, "_LastIDBuffer", _lastIdBuffer);
-
-         
-        var arr = new BoidData[BoidsNum + 1];
-        BoidBuffer.GetData(arr);
-        var mo = "";
-        for (var i = 0; i < BoidsNum + 1; i++)
-        {
-            mo += "," + arr[i].Id;
-        }
-        print("srt:" + mo);
-        
-        _threadGroupSize = Mathf.CeilToInt(BoidsNum / BLOCK_SIZE); //スレッドグループサイズが丁度良くなるようにしないと効率が悪い
-        Sort();
     }
 
     protected void Sort()
     {
-        var arr = new BoidData[BoidsNum];
-        var idarr = new int[BoidsNum];
-        BoidBuffer.GetData(arr);
-        _lastIdBuffer.GetData(idarr);
-        var mo = "";
-       /* for (var i = 0; i < BoidsNum; i++)
-        {
-            mo += "," + arr[i].Id + "(" + idarr[i] + ")";
-        }
-        print("pre:" + mo);*/
-        var cnt = 0;
-        for (var len = 2; len <= BoidsNum; len *= 2)
+        //ソート
+        for (var len = 2; len <= BoidsNum; len *= 2)//len==m
         {
             BoidComputeShader.SetInt("_Length", len);
-            for(var tar = len / 2; tar > 0; tar /= 2)
+            for(var tar = len / 2; tar > 0; tar /= 2)//tar==l
             {
                 BoidComputeShader.SetInt("_Target", tar);
                 BoidComputeShader.Dispatch(_sortId, _threadGroupSize, 1, 1);
-                cnt++;
             }
         }        
-
-        BoidComputeShader.Dispatch(_setLastId, _threadGroupSize, 1, 1);
         
-        BoidBuffer.GetData(arr);
-        _lastIdBuffer.GetData(idarr);
-        mo = "";
-        for (var i = 0; i < BoidsNum; i++)
-        {
-            mo += "," + arr[i].Id + "(" + idarr[i] + ")";
-        }
-        print("res:" + mo + KernelId + "/" + _sortId + "/" + _setLastId + "_" + cnt);
+        //バケットの最後の要素を取り出す
+        _lastIdBuffer.SetData(new int[_bucketSizeXYZ]);
+        BoidComputeShader.Dispatch(_setLastId, _threadGroupSize, 1, 1);        
     }
     
     protected new struct BoidData

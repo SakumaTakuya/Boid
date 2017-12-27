@@ -56,8 +56,8 @@ public class SimpleBoids : MonoBehaviour
 	
 	// Use this for initialization
 	private void Start () {
-		Initialize();
-		InitBoid();
+		InitializeValues();
+		InitializeBuffers();
 	}
 	
 	// Update is called once per frame
@@ -72,7 +72,7 @@ public class SimpleBoids : MonoBehaviour
 		BoidBuffer = null;
 	}
 
-	protected virtual void Initialize()
+	protected virtual void InitializeValues()
 	{
 		//ComputeShaderに値を渡す
 		BoidComputeShader.SetInt("_BoidsNum", BoidsNum);
@@ -92,9 +92,9 @@ public class SimpleBoids : MonoBehaviour
 		KernelId = BoidComputeShader.FindKernel("SimulateCS"); //カーネルIDを取得
 	}
 
-	protected virtual void InitBoid()
+	protected virtual void InitializeBuffers()
 	{
-		//Bufferの初期化(ここの+1はここでは全く意味がないがBucketで面倒がないようにするために書いている)
+		//Bufferの初期化
 		BoidBuffer = new ComputeBuffer(BoidsNum, Marshal.SizeOf(typeof(BoidData)));
 
 		var boidArray = new BoidData[BoidsNum];
